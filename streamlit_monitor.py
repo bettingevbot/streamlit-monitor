@@ -1,84 +1,90 @@
 import streamlit as st
+import pandas as pd
+import psycopg2
+from datetime import datetime, timedelta
 import time
-import os
-import glob
 
-# Define the line numbers we want to see
-ALLOWED_INFO_LINES = {105, 113, 131, 140, 988, 79, 995, 996, 978}
+# Database configuration
+DATABASE_CONFIG = {
+    "dbname": "horse_aus",
+    "user": "postgres",
+    "password": "postgres",
+    "host": "localhost",
+    "port": "5432"
+}
 
-def check_security():
-    """Check password authentication"""
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
+def get_db_connection():
+    return psycopg2.connect(**DATABASE_CONFIG)
 
-    if not st.session_state.authenticated:
-        password = st.text_input("Enter password:", type="password")
-        if password == st.secrets["password"]:
-            st.session_state.authenticated = True
-        else:
-            if password:  # Only show error if they tried to enter a password
-                st.error("Wrong password")
-            st.stop()
-
-def get_latest_log_file(directory="."):
-    """Find the most recent log file in the specified directory"""
+def get_latest_logs(minutes=60):
+    """Get logs from the last hour from PostgreSQL"""
     try:
-        files = glob.glob(os.path.join(directory, "bot_log_*.csv"))
-        if not files:
-            return None
-        return max(files, key=os.path.getctime)
+        conn = get_db_connection()
+        query = """
+        SELECT 
+            timestamp,
+            log_level,
+            line_number,
+            message
+        FROM logs_horse_aus
+        WHERE timestamp >= NOW() - INTERVAL '%s minutes'
+        ORDER BY timestamp DESC
+        """
+        df = pd.read_sql_query(query, conn, params=(minutes,))
+        conn.close()
+        return df
     except Exception as e:
-        st.error(f"Error accessing log directory: {e}")
-        return None
-
-def load_data(file_path):
-    try:
-        filtered_lines = []
-        with open(file_path, 'r') as file:
-            for line in file:
-                parts = line.strip().split(',')
-                if len(parts) >= 4:
-                    try:
-                        line_number = int(parts[3])
-                        if parts[2] == 'INFO' and line_number in ALLOWED_INFO_LINES:
-                            filtered_lines.append(line)
-                    except ValueError:
-                        continue
-
-        return ''.join(reversed(filtered_lines))
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return None
+        st.error(f"Database error: {str(e)}")
+        return pd.DataFrame()
 
 def main():
-    st.title("Live Log Monitor")
-    
-    # Check security first
-    check_security()
-    
-    # Directory input
-    log_dir = st.text_input("Log directory:", ".")
+    st.title("Horse Racing Bot Monitor")
 
-    # Auto-refresh checkbox and interval
-    auto_refresh = st.checkbox("Auto-refresh", value=True)
-    refresh_interval = st.number_input("Refresh interval (seconds)", min_value=1, value=5)
-
-    # Get the latest log file
-    latest_file = get_latest_log_file(log_dir)
+    # Add a time filter
+    time_filter = st.sidebar.selectbox(
+        "Show logs from last:",
+        ["15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours", "8 hours", "24 hours"]
+    )
     
-    if latest_file is None:
-        st.warning("No log files found")
-        return
+    time_minutes = {
+        "15 minutes": 15,
+        "30 minutes": 30,
+        "1 hour": 60,
+        "2 hours": 120,
+        "4 hours": 240,
+        "8 hours": 480,
+        "24 hours": 1440
+    }[time_filter]
 
-    # Display current file name
-    st.subheader(f"Current log file: {os.path.basename(latest_file)}")
-    
-    # Load and display the data
-    log_text = load_data(latest_file)
-    if log_text is not None:
-        st.text_area("Log Output", log_text, height=600)
+    # Create placeholder for the logs
+    logs_placeholder = st.empty()
 
-    if auto_refresh:
+    # Auto-refresh checkbox
+    auto_refresh = st.sidebar.checkbox("Auto-refresh", value=True)
+    refresh_interval = st.sidebar.number_input("Refresh interval (seconds)", min_value=1, value=5)
+
+    while True:
+        # Get latest logs from database
+        df = get_latest_logs(time_minutes)
+
+        if not df.empty:
+            # Display the logs in the placeholder
+            with logs_placeholder.container():
+                st.dataframe(
+                    df,
+                    column_config={
+                        "timestamp": "Time",
+                        "log_level": "Level",
+                        "line_number": "Line",
+                        "message": "Message"
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+
+        if not auto_refresh:
+            break
+            
         time.sleep(refresh_interval)
         st.rerun()
 
