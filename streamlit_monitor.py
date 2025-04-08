@@ -14,12 +14,19 @@ DATABASE_CONFIG = {
 }
 
 def get_db_connection():
-    return psycopg2.connect(**DATABASE_CONFIG)
+    try:
+        conn = psycopg2.connect(**DATABASE_CONFIG)
+        return conn
+    except Exception as e:
+        st.error(f"Failed to connect to database: {str(e)}")
+        return None
 
 def get_latest_logs(minutes=60):
-    """Get logs from the last hour from PostgreSQL"""
+    conn = get_db_connection()
+    if not conn:
+        return pd.DataFrame()
+    
     try:
-        conn = get_db_connection()
         query = """
         SELECT 
             timestamp,
@@ -31,16 +38,17 @@ def get_latest_logs(minutes=60):
         ORDER BY timestamp DESC
         """
         df = pd.read_sql_query(query, conn, params=(minutes,))
-        conn.close()
         return df
     except Exception as e:
-        st.error(f"Database error: {str(e)}")
+        st.error(f"Error fetching logs: {str(e)}")
         return pd.DataFrame()
+    finally:
+        conn.close()
 
 def main():
-    st.title("Horse Racing Bot Monitor")
+    st.title("Live Log Monitor")
 
-    # Add a time filter
+    # Add a time filter in the sidebar
     time_filter = st.sidebar.selectbox(
         "Show logs from last:",
         ["15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours", "8 hours", "24 hours"]
@@ -56,19 +64,20 @@ def main():
         "24 hours": 1440
     }[time_filter]
 
-    # Create placeholder for the logs
-    logs_placeholder = st.empty()
-
-    # Auto-refresh checkbox
+    # Auto-refresh controls
     auto_refresh = st.sidebar.checkbox("Auto-refresh", value=True)
-    refresh_interval = st.sidebar.number_input("Refresh interval (seconds)", min_value=1, value=5)
+    refresh_interval = st.sidebar.number_input("Refresh interval (seconds)", 
+                                             min_value=1, 
+                                             value=5)
+
+    # Create placeholder for logs
+    logs_placeholder = st.empty()
 
     while True:
         # Get latest logs from database
         df = get_latest_logs(time_minutes)
 
         if not df.empty:
-            # Display the logs in the placeholder
             with logs_placeholder.container():
                 st.dataframe(
                     df,
@@ -81,6 +90,8 @@ def main():
                     hide_index=True,
                     use_container_width=True
                 )
+        else:
+            st.warning("No logs found in the selected time period")
 
         if not auto_refresh:
             break
@@ -90,3 +101,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
