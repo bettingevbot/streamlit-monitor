@@ -5,17 +5,15 @@ from datetime import datetime, timedelta
 import time
 
 # Database configuration
-DATABASE_CONFIG = {
-    "dbname": "horse_aus",
-    "user": "postgres",
-    "password": "postgres",
-    "host": "localhost",
-    "port": "5432"
-}
+DATABASE_CONFIG = st.secrets["postgres"]
 
 def get_db_connection():
     try:
-        conn = psycopg2.connect(**DATABASE_CONFIG)
+        # Print connection details (temporary for debugging)
+        st.write("Attempting to connect with:", {
+            k: v for k, v in st.secrets["postgres"].items() if k != 'password'
+        })
+        conn = psycopg2.connect(**st.secrets["postgres"])
         return conn
     except Exception as e:
         st.error(f"Failed to connect to database: {str(e)}")
